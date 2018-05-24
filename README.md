@@ -8,3 +8,5 @@ Create hexmaps from geoJSON boundary files using an energy minimisation techniqu
 4. Slightly reduce the scale of the collection of centroids and repeat step 3.
 5. Repeat until the scale is tiny and then select the zoom at which.
 6. We use Raphael.js to visualise all of this.
+7. We output HexJSON of the final configuration.
+8. The HexJSON is visualised using a HexJSON to HTML library.
