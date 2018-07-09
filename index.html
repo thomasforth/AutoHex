@@ -1,0 +1,601 @@
+<html>
+
+<head>
+    <script type="text/javascript" src="js/raphael.min.js"></script>
+    <script type="text/javascript" src="js/leaflet/leaflet.js"></script>
+    <script type="text/javascript" src="js/stuquery.js"></script>
+    <script type="text/javascript" src="js/stuquery.hexmap.js"></script>
+    <link rel="stylesheet" href="js/leaflet/leaflet.css" />
+    <link rel="stylesheet" href="css/stuquery.hexmap.css">
+    <title>AutoHex</title>
+    <style>
+        body {
+            text-align: center;
+            margin: auto;
+            font-family: sans-serif;
+        }
+        
+        #pageHolder {
+            margin: auto;
+            max-width: 800px;
+        }
+        
+        p {
+            max-width: 800px;
+            text-align: left;
+            margin: auto;
+        }
+        
+        #raphaelholder {
+            text-align: center;
+            margin: auto;
+            height: 720px;
+        }
+        
+        #HexJSON {
+            font-size: small;
+        }
+        
+        #areamapControls {
+            width: 320px;
+            margin: auto;
+            border: 0.1em solid #629b99;
+        }
+        
+        #areamapControlsContent {
+            margin: 0.5em;
+        }
+        
+        .selectionHolder {
+            display: inline-block;
+            text-align: center;
+            margin-left: auto;
+            margin-right: auto;
+            width: 320px;
+            margin: 0.8em;
+            border: 0.1em solid #629b99;
+        }
+        
+        .selectionText {
+            background-color: #7bc1bf;
+            color: white;
+            padding: 0.2em 0.2em 0.3em 0.2em;
+            font-size: 1em;
+        }
+        
+        .selectionContent {
+            margin-top: -3px;
+            width: 100%;
+            font-family: 'Arial';
+            font-size: 1.3em;
+            background-color: #ffffff;
+        }
+        
+        #areamap {
+            width: 720px;
+            height: 500px;
+            pointer-events: none;
+            margin: 1em auto;
+            background-color: rgb(231, 229, 229);
+        }
+        
+        #hexmapHolder {
+            width: 720px;
+            height: 720px;
+            margin: 1em auto;
+            padding-bottom: 2em;
+        }
+        
+        .propertyChoiceHolder {
+            text-align: left;
+            margin: 0.3em auto 0.6em auto;
+            font-size: 0.8em;
+        }
+        
+        .propertyChoiceLabel {
+            display: inline-block;
+            width: 55%;
+            text-align: right;
+        }
+        
+        .sectionHolder {
+            display: none;
+        }
+        
+        .center {
+            text-align: center;
+        }
+        
+        #fileInput {
+            margin: 0.5em;
+        }
+    </style>
+</head>
+
+<body onload="bodyLoad()">
+    <div id="pageHolder">
+        <h1>AutoHex</h1>
+        <p class="center"><strong>Automatically convert GeoJSON to hexmaps.</strong></p>
+        <div class="selectionHolder">
+            <div class="selectionText">Select a GeoJSON File</div>
+            <div id="fileInput">
+                <input type="file" id="your-files">
+            </div>
+        </div>
+        <div id="areaMapHolder" class="sectionHolder">
+            <div id="areamapControls">
+                <div class="selectionText">Output options</div>
+                <div id="areamapControlsContent">
+                    <div class="propertyChoiceHolder">
+                        <div class="propertyChoiceLabel">Pick property for hex id:
+                        </div>
+                        <select id="idChoice" onchange="updateMap()"></select>
+                    </div>
+                    <div class="propertyChoiceHolder">
+                        <div class="propertyChoiceLabel">Pick property for hex label:
+                        </div>
+                        <select id="nameChoice" onchange="updateMap()"></select>
+                    </div>
+                    <button id="startButton" onclick="start()">Start processing</button>
+                </div>
+            </div>
+            <h2>Area map</h2>
+            <div id="areamap"></div>
+        </div>
+        <div id="calculationHolder" class="sectionHolder">
+            <h2>Calculation grid</h2>
+            <div id="raphaelholder"></div>
+            <p id="score"></p>
+        </div>
+        <div id="resultsHolder" class="sectionHolder">
+            <h2>HexJSON output</h2>
+            <p id="HexJSON"></p>
+            <h2>Hexmap output</h2>
+            <div id="hexmapHolder">
+            </div>
+        </div>
+    </div>
+</body>
+
+<script>
+    var hexgrid = [];
+    var candidatepoints = [];
+
+    function bodyLoad() {
+        addFilePickerAction();
+    }
+
+    var map;
+
+    function createMap() {
+        areaMapHolder.style.display = "block";
+
+        // Load map layer
+        map = L.map('areamap', {
+            zoomControl: false,
+            scrollWheelZoom: false,
+            touchZoom: false,
+        }).setView([53.799762, -1.549042], 12);
+    }
+
+    var mapData;
+
+    function addFilePickerAction() {
+        var control = document.getElementById("your-files");
+        control.addEventListener("change", function (event) {
+            files = control.files;
+            setTimeout(function () {
+                newFilePicked();
+            }, 500);
+
+        }, false);
+
+        reader = new FileReader;
+
+        // When file loads
+        reader.onload = function (event) {
+            newDataLoaded();
+        };
+    }
+
+    function newDataLoaded() {
+        startButton.style.visibility = "hidden";
+        if (map == undefined) {
+            createMap();
+        }
+        mapData = JSON.parse(reader.result);
+        getProperties();
+        updateMap();
+    }
+
+    function updateMap() {
+        addNewMapLayer();
+        calculateCentroids();
+        addCentroidsToMap();
+        // Allow the map to be drawn before calculating fit
+        setTimeout(function () {
+            getCentroidsXY();
+            getIndexOfCentralFeature();
+            startButton.style.visibility = "visible";
+        }, 1000);
+    }
+
+    var files;
+    var reader;
+    // Event listener reads file as text
+    function newFilePicked() {
+        reader.readAsText(files[0]);
+    }
+
+    // Get the geoJSON feature properties and add them to selection
+    function getProperties() {
+        var layerProperties = Object.keys(mapData.features[0].properties);
+        nameChoice.innerHTML = "";
+        idChoice.innerHTML = "";
+        for (var i = 0; i < layerProperties.length; i++) {
+            var newPropertyName = document.createElement("option");
+            newPropertyName.value = layerProperties[i];
+            newPropertyName.innerHTML = layerProperties[i];
+            nameChoice.appendChild(newPropertyName);
+
+            var newPropertyId = document.createElement("option");
+            newPropertyId.value = layerProperties[i];
+            newPropertyId.innerHTML = layerProperties[i];
+            idChoice.appendChild(newPropertyId);
+        }
+    }
+
+    var mapCentroids;
+    var mapGeojson;
+
+    function addNewMapLayer() {
+        if (map.hasLayer(mapGeojson) == true) {
+            map.removeLayer(mapGeojson);
+        }
+        
+        mapGeojson = L.geoJson(mapData, {
+            style: function (feature) {
+                return {
+                    "fillOpacity": 0.4,
+                    "weight": 3,
+                    "fillColor": "orange",
+                    "color": "orange"
+                };
+            },
+            onEachFeature: function (feature, layer) {
+                layer.bindPopup(feature.properties[nameChoice.value]);
+            }
+        }).addTo(map);
+
+        map.fitBounds(mapGeojson.getBounds());
+        map.setView(mapGeojson.getBounds().getCenter());
+    }
+
+    // Get the centroid of each polygon feature
+    function calculateCentroids() {
+        mapCentroids = [];  
+        var features = mapGeojson.getLayers();
+        for (var i = 0; i < features.length; i++) {
+            mapCentroids.push({
+                "lat": features[i].getBounds().getCenter().lat,
+                "lng": features[i].getBounds().getCenter().lng,
+                "name": features[i].feature.properties[nameChoice.value],
+                "site_id": features[i].feature.properties[idChoice.value],
+            });
+        }
+    }
+
+    var locationsLayer;
+
+    // Add the centroids of each ward to the map
+    function addCentroidsToMap() {
+        if (map.hasLayer(locationsLayer) == true) {
+            map.removeLayer(locationsLayer);
+        }
+
+        var circleOptions = {
+            fillOpacity: 0.9,
+            weight: 1,
+            color: "red"
+        }
+
+        var markerList = [];
+
+        for (var i = 0; i < mapCentroids.length; i++) {
+
+            if (isNaN(mapCentroids[i]["lat"]) == false) {
+                var locationPoint = new L.circle([mapCentroids[i]["lat"], mapCentroids[i]["lng"]], 300, circleOptions);
+                markerList.push(locationPoint);
+            }
+        }
+
+        locationsLayer = L.featureGroup(markerList);
+        locationsLayer.addTo(map);
+    }
+
+    // Get the centroids position in pixels
+    function getCentroidsXY() {
+        var features = mapGeojson.getLayers();
+        for (var i = 0; i < features.length; i++) {
+            mapCentroids[i]["x"] = map.latLngToContainerPoint(features[i].getBounds().getCenter()).x;
+            mapCentroids[i]["y"] = map.latLngToContainerPoint(features[i].getBounds().getCenter()).y;
+        }
+    }
+
+    // Get the feature containing the central point of the layer, save the index of this.
+    function getIndexOfCentralFeature() {
+        var centralPoint = locationsLayer.getBounds().getCenter();
+        var smallestSeparation = Infinity;
+        var centroidPoints = locationsLayer.getLayers();
+        for (var i = 0; i < centroidPoints.length; i++) {
+            var currentSeparation = centroidPoints[i].getLatLng().distanceTo(centralPoint);
+            if (currentSeparation < smallestSeparation) {
+                smallestSeparation = currentSeparation;
+                indexOfOrigin = i;
+            }
+        }
+    }
+
+    var paper;
+    var totalscale = 1;
+    var indexOfOrigin;
+
+    function start() {
+        calculationHolder.style.display = "block";
+        calculationHolder.scrollIntoView();
+
+        setTimeout(function () {
+            iterationCount = 0;
+            bestcombinedscore = 10000000;
+            bestscale = "";
+            totalscale = 1;
+
+            if (paper != undefined) {
+                paper.clear();
+            } else {
+                paper = Raphael(document.getElementById('raphaelholder'), 780, 720);
+            }
+
+            candidatepoints = JSON.parse(JSON.stringify(mapCentroids));
+            createGrid(40);
+            scaleCandidates(5);
+            oneiteration();
+        }, 500);
+    }
+
+    var iterationCount = 0;
+    var bestcombinedscore = 10000000;
+    var bestscale = "";
+
+    function oneiteration() {
+        var score = 0;
+        var gridscore = 0;
+
+        moveCandidatesToOrigin(indexOfOrigin);
+        scaleCandidates(0.97);
+        moveCandidatesToCentre(indexOfOrigin);
+        score += Math.floor(assignhexestocandidates());
+        paper.clear();
+        drawGrid();
+        drawCandidates();
+
+        gridscore += calculateGridScore() / 100;
+        document.getElementById("score").innerHTML = "Score = " + score + " Gridscore = " + gridscore + "<br/>Best combined score = " + Math.round(bestcombinedscore) + " at scale " + Math.round(bestscale, 3);
+
+        combinedscore = gridscore * 2 + score;
+
+        if (combinedscore < bestcombinedscore) {
+            bestcombinedscore = combinedscore;
+            bestscale = totalscale;
+        }
+
+        iterationCount++;
+        if (iterationCount < 60) {
+            setTimeout(oneiteration, 80);
+        } else {
+            moveCandidatesToOrigin(indexOfOrigin);
+            scaleCandidates(bestscale / totalscale);
+            moveCandidatesToCentre(indexOfOrigin);
+            score += Math.floor(assignhexestocandidates());
+            paper.clear();
+            drawGrid();
+            drawCandidates()
+            createHEXJson();
+        }
+    }
+
+    function calculateGridScore() {
+        // boundingBox of all hexes
+        var gridscore = 0;
+        var gridhexes = paper.set();
+
+        for (i = 0; i < hexgrid.length; i++) {
+            if (hexgrid[i].assigned == true) {
+                var circle = paper.circle(hexgrid[i].x, hexgrid[i].y, 0);
+                circle.node.setAttribute('name', hexgrid[i].name);
+                circle.node.setAttribute('site_id', hexgrid[i].site_id);
+                gridhexes.push(circle);
+            }
+        }
+
+        gridscore = gridhexes.getBBox().width * gridhexes.getBBox().height;
+        gridhexes.clear();
+
+        return gridscore;
+    }
+
+    function createGrid(spacing) {
+        hexgrid = [];
+        for (x = 0; x < 18; x++) {
+            for (y = 0; y < 17; y++) {
+                var gridElement = new Object();
+                gridElement["x"] = x * spacing + 40 + (spacing * 0.5 * (y % 2));
+                gridElement["y"] = y * spacing + 40;
+                gridElement["assigned"] = false;
+                gridElement["name"] = null;
+                gridElement["site_id"] = null;
+                gridElement["q"] = x;
+                gridElement["r"] = y;
+                hexgrid.push(gridElement);
+            }
+        }
+    }
+
+    function drawGrid() {
+        var spacing = 40;
+        for (i = 0; i < hexgrid.length; i++) {
+            var circle = paper.circle(hexgrid[i].x, hexgrid[i].y, 10).attr("fill", gridcolour(hexgrid[i]));
+            circle.node.setAttribute('name', hexgrid[i].name);
+            circle.node.setAttribute('site_id', hexgrid[i].site_id);
+        }
+    }
+
+    function scaleCandidates(scale) {
+        totalscale = totalscale * scale;
+        for (i = 0; i < candidatepoints.length; i++) {
+            candidatepoints[i].x = candidatepoints[i].x * scale;
+            candidatepoints[i].y = candidatepoints[i].y * scale;
+        }
+    }
+
+    function gridcolour(arg) {
+        if (arg.assigned == true) {
+            return "yellow";
+        } else {
+            return "transparent";
+        }
+    }
+
+    function moveCandidatesToOrigin() {
+        originindex = 1;
+        destinationindex = 161;
+        deltax = 0 - candidatepoints[originindex].x;
+        deltay = 0 - candidatepoints[originindex].y;
+
+
+        for (i = 0; i < candidatepoints.length; i++) {
+            candidatepoints[i].x = candidatepoints[i].x + deltax;
+            candidatepoints[i].y = candidatepoints[i].y + deltay;
+        }
+    }
+
+    function moveCandidatesToCentre(originindex) {
+        destinationindex = 161;
+        deltax = hexgrid[destinationindex].x - candidatepoints[originindex].x;
+        deltay = hexgrid[destinationindex].y - candidatepoints[originindex].y;
+
+        for (i = 0; i < candidatepoints.length; i++) {
+            candidatepoints[i].x = candidatepoints[i].x + deltax;
+            candidatepoints[i].y = candidatepoints[i].y + deltay;
+        }
+    }
+
+    function drawCandidates() {
+        for (i = 0; i < candidatepoints.length; i++) {
+            var circle = paper.circle(candidatepoints[i].x, candidatepoints[i].y, 3).attr("fill", "red");
+            circle.node.setAttribute('name', candidatepoints[i].name);
+        }
+    }
+
+    function assignhexestocandidates() {
+        // reset all assigned flags 
+        for (x = 0; x < hexgrid.length; x++) {
+            hexgrid[x].assigned = false;
+            hexgrid[x].name = null;
+            hexgrid[x].site_id = null;
+        }
+
+        var distancesum = 0;
+        for (x = 0; x < candidatepoints.length; x++) {
+            assignedhexindex = pickNearestTarget(x).bestindex;
+            distancesum += pickNearestTarget(x).distance;
+            hexgrid[assignedhexindex].assigned = true;
+            hexgrid[assignedhexindex].name = candidatepoints[x].name;
+            hexgrid[assignedhexindex].site_id = candidatepoints[x].site_id;
+        }
+        return distancesum;
+    }
+
+    function pickNearestTarget(candidateindex) {
+        var indexOfClosestGridPoint = -1;
+        var distance = 10000000;
+        for (i = 0; i < hexgrid.length; i++) {
+            if (hexgrid[i].assigned == false) {
+                var squaredistance = Math.pow(candidatepoints[candidateindex].x - hexgrid[i].x, 2) + Math.pow(candidatepoints[candidateindex].y - hexgrid[i].y, 2);
+                var newdistance = Math.sqrt(squaredistance);
+                if (newdistance < distance) {
+                    distance = newdistance;
+                    indexOfClosestGridPoint = i;
+                }
+            }
+        }
+        var returnObject = new Object();
+        returnObject["distance"] = distance;
+        returnObject["bestindex"] = indexOfClosestGridPoint;
+        return returnObject;
+    }
+
+    function createHEXJson() {
+        resultsHolder.style.display = "block";
+        resultsHolder.scrollIntoView();
+
+        // get lowest assigned r and q -- and set these an offset
+        var lowestr = 100;
+        var lowestq = 100;
+
+        for (x = 0; x < hexgrid.length; x++) {
+            if (hexgrid[x].assigned == true) {
+                if (hexgrid[x].r < lowestr) {
+                    lowestr = hexgrid[x].r;
+                }
+                if (hexgrid[x].q < lowestq) {
+                    lowestq = hexgrid[x].q;
+                }
+            }
+        }
+
+        hexJSONOutput = new Object();
+
+        if (lowestr % 2 == 0) {
+            hexJSONOutput["layout"] = "odd-r";
+        } else {
+            hexJSONOutput["layout"] = "even-r";
+        }
+
+        hexJSONOutput["hexes"] = new Object();
+
+        // now output the hexjson
+        for (x = i; i < hexgrid.length; i++) {
+            if (hexgrid[i].assigned == true) {
+                var hexObject = new Object();
+                hexObject["n"] = hexgrid[i].name;
+                hexObject["q"] = hexgrid[i].q - lowestq;
+                hexObject["r"] = lowestr - hexgrid[i].r;
+                hexJSONOutput["hexes"][hexgrid[i].site_id] = hexObject;
+            }
+        }
+        document.getElementById("HexJSON").innerHTML = JSON.stringify(hexJSONOutput);
+        drawHexmap();
+    }
+
+    function drawHexmap() {
+        if (hexmapHolder.children.length > 0) {
+            hexmapHolder.removeChild(hexmapHolder.children[0]);
+        }
+        var newHexmapCode = document.createElement("code");
+        newHexmapCode.innerHTML = JSON.stringify(hexJSONOutput);
+        hexmapHolder.appendChild(newHexmapCode);
+
+        // Create an object attached to a DOM element with the ID "hexmap-1"
+        var newHexmap = S.hexmap('hexmapHolder', {
+            'formatLabel': function (id, hex) {
+                return hex.n;
+            }
+        });
+
+        // Position the hexes and scale them to the container
+        newHexmap.positionHexes().resize();
+    }
+</script>
+
+</html>
